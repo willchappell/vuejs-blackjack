@@ -8,27 +8,29 @@
         </div>
         <div>
             <h3 v-if="hand.value > 1">Player <span class="value">{{hand.value}}</span></h3>
-            <div v-for="card in hand.cards" :key="card.id" :class="card.suit" class="card">
-                <div>{{card.name}}</div>
-                <img v-bind:src="card.img" /> 
-                <button v-if="!card.selected" @click="setAce(1, card.id)">1</button>
-                <button v-if="!card.selected" @click="setAce(11, card.id)">11</button>
-            </div>
+            <transition-group name="list" tag="div" appear>
+                <div v-for="card in hand.cards" :key="card.id" :class="card.suit" class="card">
+                    <Card :card="card" />
+                </div>
+            </transition-group>
         </div>
         <div>
             <h3 v-if="dealer.value > 1">Dealer <span class="value">{{dealer.value}}</span></h3>
-            <div v-for="card in dealer.cards" :key="card.id" class="card">
-                <div>{{card.name}} </div>
-                <img v-bind:src="card.img" /> 
-            </div>
+            <transition-group name="list" tag="div" appear>
+                <div v-for="(card, key) in dealer.cards" :key="key" class="card">
+                    <Card :card="card" />
+                </div>
+            </transition-group>
         </div>
         <form ref="form" v-if="!betPlaced">
             <input name="vitalInformation" v-model.number="betAmount">
             <button v-on:click="submit">Start</button>
-            <p v-if="notEnoughFunds">You dont have enough funds to make that bet</p>
         </form>
+        <p v-if="notEnoughFunds">You dont have enough funds to make that bet</p>
+        <p v-if="newDeck">The deck has been reshuffled.</p>
         <button @click="hit" v-if="inGame">Hit</button>
         <button @click="stand" v-if="inGame">Stand</button>
+        <button @click="doubleDown" v-if="inGame && turns == 0">Double Down</button>
         <button @click="restartGame" v-if="restart">Play again</button>
     </div>
 </template>
@@ -38,9 +40,13 @@ import spadeImg from '../assets/spade.svg';
 import clubImg from '../assets/clubs.svg';
 import diamondImg from '../assets/diamond.svg';
 import heartImg from '../assets/heart.svg';
+import Card from './Card.vue';
 
 export default {
     name: 'Blackjack',
+    components: {
+        Card
+    },
     data: function() {
         return {
             deck: [],
@@ -74,7 +80,9 @@ export default {
             bank: 100,
             betPlaced: false,
             betAmount: 1,
-            notEnoughFunds: false
+            notEnoughFunds: false,
+            newDeck: false,
+            turns: 0
         }
     },
     created() {
@@ -88,6 +96,7 @@ export default {
                 this.notEnoughFunds = false;
                 this.bank -= this.betAmount;
                 this.betPlaced = true;
+                this.newDeck = false;
                 this.startGame();
             } else {
                 this.notEnoughFunds = true;
@@ -95,18 +104,21 @@ export default {
         },
         buildDeck() {
             let id = 1;
-            for (let i = 0; i < this.suits.length; i++) { // 4 iterations
-                for (let j = 0; j < this.cards.length; j++) { // 13 iterations
-                    let card = {
-                        id: id,
-                        value: this.cards[j].value,
-                        name: this.cards[j].name,
-                        suit: this.suits[i].name,
-                        selected: this.cards[j].selected,
-                        img: this.suits[i].img
+            this.deck = [];
+            for (let index = 0; index < 7; index++) {
+                for (let i = 0; i < this.suits.length; i++) { // 4 iterations
+                    for (let j = 0; j < this.cards.length; j++) { // 13 iterations
+                        let card = {
+                            id: id,
+                            value: this.cards[j].value,
+                            name: this.cards[j].name,
+                            suit: this.suits[i].name,
+                            selected: this.cards[j].selected,
+                            img: this.suits[i].img
+                        }
+                        this.deck.push(card);
+                        id++;
                     }
-                    this.deck.push(card);
-                    id++;
                 }
             }
         },
@@ -135,48 +147,136 @@ export default {
             }
         },
         startGame() {
-            this.getCard(2, "player");
+            this.getCard(1, "player");
             this.getCard(1, "dealer");
+            this.getCard(1, "player");
             this.gameStarted = true;
             this.inGame = true;
+            this.checkBlackjack();
+        },
+        checkBlackjack() {
+            if (this.hand.value == 21) {
+                if (this.dealer.value == 11 || this.dealer.value == 10) {
+                    this.runDealer();
+                } else {
+                    this.compareDealerValues();
+                }
+            }
         },
         hit() {
+            this.turns += 1;
             this.getCard(1, "player");
             this.checkBust();
         },
         stand() {
             this.runDealer();
         },
+        doubleDown() {
+            if (this.betAmount <= this.bank) {
+                this.bank -= this.betAmount;
+                this.betAmount = this.betAmount * 2;
+                this.hit();
+                this.runDealer();
+            } else {
+                this.notEnoughFunds = true;
+            }
+        },
         checkBust() {
             if (this.hand.value > 21) {
-                this.restart = true;
-                this.inGame = false;
-                this.betAmount = 0;
+                if (this.checkPlayerAce()) { // first check if the player is about to buss and is holding an 11 valued ace
+                    this.changePlayerAce();
+                } else {
+                    this.restart = true;
+                    this.inGame = false;
+                    this.betAmount = 0;
+                }
+            }
+        },
+        checkPlayerAce() {
+            if (this.hand.value > 21) {
+                let highAceFound = false;
+                for (let i = 0; i < this.hand.cards.length; i++) {
+                    if (this.hand.cards[i].value == 11) {
+                        highAceFound = true;
+                        return highAceFound;
+                    }
+                }
+                return highAceFound;
+            }
+        },
+        changePlayerAce() {
+            this.hand.value = 0;
+            for (let i = 0; i < this.hand.cards.length; i++) {
+                if (this.hand.cards[i].value == 11) {
+                    this.hand.cards[i].value = 1;
+                }
+                this.hand.value += this.hand.cards[i].value;
             }
         },
         restartGame() {
-            this.deck = [];
             this.hand = {value: 0, cards: []};
             this.dealer = {value: 0, cards: []};
             this.gameStarted = false;
             this.inGame = false;
             this.restart = false;
-            this.buildDeck();
-            this.shuffleDeck(this.deck);
             this.betPlaced = false;
+            this.turns = 0;
+            if (this.deck.length < 320) {
+                this.buildDeck();
+                this.newDeck = true;
+            }
         },
         runDealer() {
-            while (this.dealer.value < 17) {
+            this.inGame = false;
+            let self = this;
+            if (this.dealer.value < 17) {
+                window.setTimeout( function() {
+                    self.runDealer();
+                }, 1000)
                 this.getCard(1, "dealer");
+            } else {
+                this.compareDealerValues();
             }
-            
-            if (this.dealer.value == this.hand.value) {
+        },
+        checkDealerAce() {
+            if (this.dealer.value > 21) {
+                let highAceFound = false;
+                for (let i = 0; i < this.dealer.cards.length; i++) {
+                    if (this.dealer.cards[i].value == 11) {
+                        highAceFound = true;
+                        return highAceFound;
+                    }
+                }
+                return highAceFound;
+            }
+        },
+        changeDealerAce() {
+            this.dealer.value = 0;
+            for (let i = 0; i < this.dealer.cards.length; i++) {
+                if (this.dealer.cards[i].value == 11) {
+                    this.dealer.cards[i].value = 1;
+                }
+                this.dealer.value += this.dealer.cards[i].value;
+            }
+            let self = this;
+            window.setTimeout( function() {
+                self.runDealer();
+            }, 1000)
+        },
+        compareDealerValues() {
+            if (this.checkDealerAce()) { // first check if the dealer is about to buss and is holding an 11 valued ace
+                this.changeDealerAce();
+            } else if (this.dealer.value == this.hand.value) {
                 this.bank = this.bank + this.betAmount;
                 this.betAmount = 0;
                 this.restart = true;
                 this.inGame = false;
             } else if (this.dealer.value < this.hand.value || this.dealer.value > 21) {
-                this.bank = this.bank + this.betAmount * 2;
+                if (this.hand.value == 21) {
+                    this.bank = this.bank + this.betAmount * 2.5;
+                } else {
+                    this.bank = this.bank + this.betAmount * 2;
+                }
                 this.betAmount = 0;
                 this.restart = true;
                 this.inGame = false;
@@ -186,19 +286,19 @@ export default {
                 this.inGame = false;
             }
         },
-        setAce(val, id) {
-            let obj = this.hand.cards.find(obj => obj.id == id); // find object by id
-            obj.value = val; // set value of ace to what option was passed from the button
-            obj.selected = true; // set the ace to be selected so it can't be changed again
-            let foundIndex = this.hand.cards.findIndex(x => x.id == id); // find index of ace that needs changing
-            this.hand.cards[foundIndex] = obj; // change the ace to have correct value and selected
-            this.getValue();
-        },
         getValue() {
             this.hand.value = 0;
             for (let i = 0; i < this.hand.cards.length; i++) {
                 if (!Array.isArray(this.hand.cards[i].value)) {// if not an ace
                     const cardVal = this.hand.cards[i].value;
+                    this.hand.value += cardVal;
+                } else {
+                    let cardVal = 11;
+                    if (this.hand.value < 11) {
+                        cardVal = 11;
+                    } else {
+                        cardVal = 1;
+                    }
                     this.hand.value += cardVal;
                 }
             }
@@ -236,26 +336,15 @@ export default {
     display: inline-block;
     padding: 20px;
 }
-
 .card img {
     width: 50px;
     height: 50px;
 }
-.bank {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 49%;
-    background: black;
-    color: white;
-    padding: 20px 0;
+.list-enter-active {
+  transition: all 1s;
 }
-.bank span {
-
-}
-.bet {
-    right: 0;
-    left: auto;
-    border-right: none;
+.list-enter /* .list-leave-active below version 2.1.8 */ {
+  opacity: 0;
+  transform: translateY(30px);
 }
 </style>
